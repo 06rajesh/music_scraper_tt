@@ -7,6 +7,8 @@
 
 
 import mysql.connector
+from datetime import datetime
+import re
 
 from scrapy.exceptions import NotConfigured
 from music_scrapper_tt.items import AlbumItem
@@ -21,6 +23,8 @@ class ItemToDBPipeline(object):
         self.host = host
         self.conn = None
         self.cursor = None
+        self.crawled = 0
+        self.failed = 0
 
     @classmethod
     def from_crawler(cls, crawler):
@@ -38,6 +42,22 @@ class ItemToDBPipeline(object):
         splitted = date_str.split('/')
         return splitted[2] + "-" + splitted[0] + "-" + splitted[1]
 
+    @staticmethod
+    def convert_album_date(date_str):
+        if date_str is not None:
+            tails = re.findall(r"\d+(st|nd|rd|th)", date_str)
+            if len(tails) == 1:
+                new_str = date_str.replace(tails[0], "")
+                try:
+                    date_object = datetime.strptime(new_str, "%B %d, %Y")
+                    return date_object.date()
+                except ValueError:
+                    return None
+            else:
+                return None
+        else:
+            return None
+
     def open_spider(self, spider):
         self.conn = mysql.connector.connect(db=self.db,
                                             user=self.user, passwd=self.password,
@@ -53,33 +73,48 @@ class ItemToDBPipeline(object):
         return item
 
     def process_albums(self, item):
-        sql = "INSERT INTO albums (title, artist, url) VALUES (%s, %s, %s)"
-        self.cursor.execute(sql,
-                            (
-                                item.get("title"),
-                                item.get("artist"),
-                                item.get("url"),
-                            ))
-        self.conn.commit()
-        self.process_genres(self.cursor.lastrowid, 'album', item.get("genres"))
+        sql = "INSERT INTO albums (title, artist, url, image, length, released, label, description) VALUES " \
+              "(%s, %s, %s, %s, %s, %s, %s, %s)"
+        try:
+            self.cursor.execute(sql,
+                                (
+                                    item.get("title"),
+                                    item.get("artist"),
+                                    item.get("url"),
+                                    item.get("image_url"),
+                                    item.get("length"),
+                                    self.convert_album_date(item.get("released")),
+                                    item.get("label"),
+                                    item.get("desc"),
+                                ))
+            self.conn.commit()
+            self.process_genres(self.cursor.lastrowid, 'album', item.get("genres"))
+            self.crawled += 1
+        except mysql.connector.Error as err:
+            self.save_failed_urls(item.get("url"))
 
     def process_musics(self, item):
-        sql = "INSERT INTO musics (title, artist, duration, uploaded, listens, " \
-              "starred, comments, downloads) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+        sql = "INSERT INTO musics (title, artist, url, duration, uploaded, listens, " \
+              "starred, comments, downloads) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
 
-        self.cursor.execute(sql,
-                            (
-                                item.get("title"),
-                                item.get("artist"),
-                                item.get("duration"),
-                                self.convert_date(item.get("uploaded")),
-                                item.get("listens"),
-                                item.get("starred"),
-                                item.get("comments"),
-                                item.get("downloads"),
-                            ))
-        self.conn.commit()
-        self.process_genres(self.cursor.lastrowid, 'music', item.get("genres"))
+        try:
+            self.cursor.execute(sql,
+                                (
+                                    item.get("title"),
+                                    item.get("artist"),
+                                    item.get("url"),
+                                    item.get("duration"),
+                                    self.convert_date(item.get("uploaded")),
+                                    item.get("listens"),
+                                    item.get("starred"),
+                                    item.get("comments"),
+                                    item.get("downloads"),
+                                ))
+            self.conn.commit()
+            self.process_genres(self.cursor.lastrowid, 'music', item.get("genres"))
+            self.crawled += 1
+        except mysql.connector.Error as err:
+            self.save_failed_urls(item.get("url"))
 
     def process_genres(self, item_id, item_type, genres):
         table_name = 'album_genres'
@@ -95,5 +130,12 @@ class ItemToDBPipeline(object):
                                     ))
             self.conn.commit()
 
+    def save_failed_urls(self, url):
+        sql = "INSERT INTO failed_urls (url) VALUES ('" + url + "')"
+        self.cursor.execute(sql)
+        self.conn.commit()
+        self.failed += 1
+
     def close_spider(self, spider):
         self.conn.close()
+        print("Total {} pages crawled and {} pages failed".format(self.crawled, self.failed))

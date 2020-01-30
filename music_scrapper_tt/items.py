@@ -24,6 +24,7 @@ class MusicItem(scrapy.Item):
     title = scrapy.Field()
     artist = scrapy.Field()
     duration = scrapy.Field()
+    url = scrapy.Field()
     uploaded = scrapy.Field()
     listens = scrapy.Field()
     starred = scrapy.Field()

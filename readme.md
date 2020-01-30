@@ -19,6 +19,6 @@ Clone this repository using following command:
 git clone https://github.com/06rajesh/music_scraper_tt.git
 ``````
 #### Step 2
-import music_archive.sql database from the project direcotry to 
-your database. It will create a database named music_archive and 
+import **music_archive.sql** database from the project direcotry to 
+your database. It will create a database named _music_archive_ and 
 other required tables on your mysql database.

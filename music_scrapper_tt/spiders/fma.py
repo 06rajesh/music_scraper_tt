@@ -29,20 +29,31 @@ class FmaSpider(scrapy.Spider):
 
     def start_requests(self):
         urls = [
-            'http://freemusicarchive.org/genre/Blues/',
+            'https://www.freemusicarchive.org/static',
         ]
         for url in urls:
             yield scrapy.Request(url=url, callback=self.parse)
 
     def parse(self, response):
+        genre_links = response.css('div#fma-menu div.menu-link-bygenre div.menu-links a::attr(href)').getall()
+        for genre_page in genre_links:
+            next_url = 'https://freemusicarchive.org/' + genre_page
+            yield Request(next_url, callback=self.parse_genre_page)
+
+    def parse_genre_page(self, response):
         for play_item in response.css('div.playlist div.play-item'):
             song_url = play_item.css('div.playtxt span.ptxt-track a::attr(href)').extract_first()
             if len(song_url) > 0:
                 yield Request(self.base_url + song_url, callback=self.parse_music_page)
 
             album_url = play_item.css('div.playtxt span.ptxt-album a::attr(href)').extract_first()
-            if len(album_url) > 0:
+            if album_url is not None and len(album_url) > 0:
                 yield Request(self.base_url + album_url, callback=self.parse_album_page)
+
+        paginations = response.css('div.pagination-full b a::attr(href)').getall()
+        if len(paginations) > 0:
+            next_url = 'https://freemusicarchive.org/' + paginations[-1]
+            yield Request(next_url, callback=self.parse_genre_page)
 
     def parse_music_page(self, response):
         page_bcumb = '//div[@id="content"]/div[@class="bcrumb"]'
@@ -52,7 +63,8 @@ class FmaSpider(scrapy.Spider):
         music_dict["title"] = self.safe_strip(response.xpath(page_bcumb + '/h1/text()').extract()[1])
         music_dict["artist"] = self.safe_strip(response.xpath(page_bcumb + '/h1/span[@class="subh1"]/a/text()')
                                                .extract_first())
-        music_dict["duration"] = self.safe_strip(response.css('div.playlist div.play-item span.playtxt::text').extract()[2])
+        music_dict['url'] = response.request.url
+        music_dict["duration"] = self.safe_strip(response.css('div.playlist div.play-item span.playtxt::text').extract()[-1])
 
         for stats in response.css('div.colr-sml-toppad div.sbar-stat'):
             stat_key = self.remove_char(stats.css('span.stathd::text').extract_first().lower())
@@ -80,24 +92,26 @@ class FmaSpider(scrapy.Spider):
 
         album_dict["image_url"] = infobox.css('div.album-image img::attr(src)').extract_first()
         for stat in infobox.css('div.sbar-stat'):
-            stat_key = self.remove_char(stat.css('span.stathd::text').extract_first().lower())
-            stat_val = self.safe_strip(stat.css('b::text').extract_first())
             try:
+                stat_key = self.remove_char(stat.css('span.stathd::text').extract_first().lower())
+                stat_val = self.safe_strip(stat.css('b::text').extract_first())
                 album_dict[stat_key] = stat_val
-            except KeyError:
+            except (TypeError, AttributeError, KeyError) as e:
                 pass
 
         for stat in infobox.css('div.sbar-stat-multi'):
-            stat_key = self.remove_char(stat.css('span.stathd::text').extract_first().lower())
-            stat_val = self.safe_strip(stat.css('ul li a::text').extract())
             try:
+                stat_key = self.remove_char(stat.css('span.stathd::text').extract_first().lower())
+                stat_val = self.safe_strip(stat.css('ul li a::text').extract())
                 album_dict[stat_key] = stat_val
-            except KeyError:
+            except (TypeError, AttributeError, KeyError) as e:
                 pass
 
         description = ""
         for para in infobox.css("div.main-txt-lessbot p"):
-            description += self.safe_strip(para.css('*::text').extract_first())
+            content = self.safe_strip(para.css('*::text').extract_first())
+            if content is not None:
+                description += self.safe_strip(para.css('*::text').extract_first())
 
         album_dict['desc'] = description
 
